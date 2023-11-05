@@ -17,14 +17,23 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.servlet.mvc.support.RedirectAttributes;
 
+import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
+import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
+import software.amazon.awssdk.regions.Region;
+import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.model.PutObjectRequest;
+import software.amazon.awssdk.core.sync.RequestBody;
+
 import javax.validation.Valid;
 import java.io.IOException;
 import java.math.BigDecimal;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.text.NumberFormat;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.Locale;
 import java.util.UUID;
 @Controller
 public class ProduitFormController {
@@ -55,7 +64,9 @@ public class ProduitFormController {
     @PostMapping("produit/gestion-produit/ajout")
     public String ajouterProduitEtImage(@Valid @ModelAttribute ProduitForm form, BindingResult results, RedirectAttributes redirectAttributes) {
 
-// Gestion des contraintes de saisie de formulaire
+        logger.info("Début de la méthode ajouterProduitEtImage");
+
+        // Gestion des contraintes de saisie de formulaire
         MultipartFile imageFile = form.getImageFile();
         String description = form.getDescription();
 
@@ -74,9 +85,16 @@ public class ProduitFormController {
                 redirectAttributes.addFlashAttribute("errorMessageDescription", "La description ne peut excéder 255 caractères");
             }
 
-            BigDecimal prix = form.getPrix();
-            if (prix != null && prix.doubleValue() < 0) {
-                redirectAttributes.addFlashAttribute("errorMessagePrix", "Le prix doit être supérieur à 0");
+            String prix = form.getPrix();
+            if (prix != null) {
+                try {
+                    BigDecimal prixDecimal = new BigDecimal(prix.replace(",", "."));
+                    if (prixDecimal.compareTo(BigDecimal.ZERO) < 0) {
+                        redirectAttributes.addFlashAttribute("errorMessagePrix", "Le prix doit être supérieur à 0");
+                    }
+                } catch (NumberFormatException e) {
+                    throw new RuntimeException("La conversion a échoué", e);
+                }
             }
             if (results.getFieldError("libelle") != null) {
                 redirectAttributes.addFlashAttribute("errorMessageLibelle", "Le libellé ne peut pas être vide ou excéder une certaine taille");
@@ -86,39 +104,55 @@ public class ProduitFormController {
         }
 
 
+        try {
+            logger.info("Création d'un nouveau produit");
+            Produit produit = new Produit();
+            produit.setLibelle(form.getLibelle());
+            produit.setDescription(form.getDescription());
+            // Conversion du prix
+            String prix = form.getPrix().replace(',', '.');
+            produit.setPrix(new BigDecimal(prix));
 
-        Produit produit = new Produit();
-        produit.setLibelle(form.getLibelle());
-        produit.setDescription(form.getDescription());
-        produit.setPrix(form.getPrix());
-        produit.setDateCreation(LocalDateTime.now());
+            produit.setDateCreation(LocalDateTime.now());
 
-        Categorie categorie = categorieService.findById(form.getCategorieId());
-        produit.setCategorie(categorie);
+            Categorie categorie = categorieService.findById(form.getCategorieId());
+            produit.setCategorie(categorie);
 
-        String lastReference = getLastUsedNumberFromDatabase(categorie.getLibelle());
-        String newReference = generateNewReference(categorie.getLibelle(), lastReference);
-        produit.setReference(newReference);
+            String lastReference = getLastUsedNumberFromDatabase(categorie.getLibelle());
+            String newReference = generateNewReference(categorie.getLibelle(), lastReference);
+            produit.setReference(newReference);
 
-// Sauvegarde de l'image et mise à jour du chemin dans l'entité Produit
-        if (imageFile != null && !imageFile.isEmpty()) {
-            String fileName = saveImage(imageFile);
-            produit.setCheminImage(fileName);  // Enregistrement du chemin dans l'entité Produit
+            logger.info("Sauvegarde de l'image sur S3");
+
+            // Sauvegarde de l'image et mise à jour du chemin dans l'entité Produit
+            if (imageFile != null && !imageFile.isEmpty()) {
+                String fileName = saveImage(imageFile);
+                produit.setCheminImage(fileName);  // Enregistrement du chemin dans l'entité Produit
+            }
+
+            logger.info("Sauvegarde du produit dans la base de données");
+
+            // Sauvegarde de l'entité Produit dans la base de données
+            produitService.save(produit);
+            System.out.println("Dans le contrôleur, produitService est : " + this.produitService);
+            logger.info("Produit sauvegardé avec succès");
+
+
+            DateTimeFormatter formatter = DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm:ss");
+            String formattedDate = produit.getDateCreation().format(formatter);
+            redirectAttributes.addFlashAttribute("message", "Le produit de référence " + produit.getReference() + " a été ajouté le " + formattedDate + ".");
+
+            return "redirect:/produit/gestion-produit";
+
+        } catch (Exception e) {
+            logger.error("Une erreur est survenue", e);
+            throw new RuntimeException("Échec de la sauvegarde de l'image", e);
         }
-
-
-// Sauvegarde de l'entité Produit dans la base de données
-        produitService.save(produit);
-        System.out.println("Dans le contrôleur, produitService est : " + this.produitService);
-
-
-        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm:ss");
-        String formattedDate = produit.getDateCreation().format(formatter);
-        redirectAttributes.addFlashAttribute("message", "Le produit de référence " + produit.getReference() + " a été ajouté le " + formattedDate + ".");
-
-        return "redirect:/produit/gestion-produit";
     }
-    private String saveImage(MultipartFile file) {
+    private String saveImage(MultipartFile file) throws IOException {
+
+        logger.info("Début de la méthode saveImage");
+
         if (file == null || file.getOriginalFilename() == null) {
             logger.warn("Le fichier ou le nom du fichier original est null");
             // Vous pouvez également lancer une exception ici si vous le souhaitez
@@ -127,24 +161,42 @@ public class ProduitFormController {
 
         logger.debug("Sauvegarde de l'image: {}", file.getOriginalFilename());
         try {
-            // Définit le chemin où sauvegarder l'image
-            String folder = "src/main/resources/static/images/";
+            logger.info("Tentative de sauvegarde de l'image sur S3");
+            String accessKeyId = System.getenv("AWS_ACCESS_KEY_ID");
+            String secretAccessKey = System.getenv("AWS_SECRET_ACCESS_KEY");
+            String bucketName = "img-produits";
+
+            S3Client s3client = S3Client.builder()
+                    .credentialsProvider(StaticCredentialsProvider.create(AwsBasicCredentials.create(accessKeyId, secretAccessKey)))
+                    .region(Region.EU_WEST_3)
+                    .build();
 
             // Construit un nom de fichier unique pour éviter les conflits
             String originalFileName = file.getOriginalFilename();
             String fileName = UUID.randomUUID().toString() + "_" + originalFileName;
 
-            // Crée le chemin du fichier
-            Path path = Paths.get(folder + fileName);
+            // Définit le chemin où sauvegarder l'image
+            PutObjectRequest putObjectRequest = PutObjectRequest.builder()
+                    .bucket(bucketName)
+                    .key(fileName)
+                    .build();
 
-            // Écrit le fichier sur le disque
-            Files.write(path, file.getBytes());
+            // Convertir le contenu du fichier en un objet RequestBody
+            RequestBody requestBody = RequestBody.fromInputStream(
+                    file.getInputStream(),
+                    file.getSize());
+
+            // Effectuer l'opération de mise en ligne (upload)
+            s3client.putObject(putObjectRequest, requestBody);
+
+            logger.info("Image sauvegardée avec succès sur S3");
 
             // Retourne seulement le nom du fichier (ou le chemin relatif)
             return fileName;
+
         } catch (IOException e) {
-            // Gère les exceptions
-            throw new RuntimeException("Échec de la sauvegarde de l'image", e);
+            logger.error("Échec de la sauvegarde de l'image", e);
+            throw e;
         }
     }
 

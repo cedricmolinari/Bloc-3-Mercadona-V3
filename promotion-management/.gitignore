@@ -36,4 +36,8 @@ build/
 ### autres ###
 *.DS_Store
 /images/
+<<<<<<< HEAD
 target/
+=======
+**/target/
+>>>>>>> fcc32ae (mise à jour de l'esthétique globale + correction de bugs)
