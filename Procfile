@@ -1,1 +1,1 @@
-web: java -jar promotion-management-0.0.1-SNAPSHOT.jar
+web: java -jar target/promotion-management-0.0.1-SNAPSHOT.jar
