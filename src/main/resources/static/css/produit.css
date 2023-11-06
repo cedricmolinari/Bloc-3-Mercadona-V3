@@ -84,8 +84,10 @@ h1 {
     grid-template-columns: repeat(10, 1fr);
     padding-top: 20px;
     padding-bottom: 20px;
+    align-items: center;
+    text-align: center;
     background-image: linear-gradient( to bottom, white , black 50%, white);
-    font-family: cursive, sans-serif;
+    font-family: "Gill Sans", sans-serif;
     color: azure;
 }
 
