@@ -156,6 +156,7 @@ td {
 
 #divImg {
     text-align: center;
+    height: 300px;
 }
 
 tr {
@@ -174,8 +175,8 @@ thead {
 }
 
 #img {
-    height: 80%;
-    width: 60%;
+    height: 100%;
+    width: 100%;
 }
 
 .spanTitre {
