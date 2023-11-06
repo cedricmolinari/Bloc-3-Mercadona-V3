@@ -43,8 +43,7 @@
                         <!-- Image du produit -->
 
                         <td rowspan="6" id="divImg">
-                            <img th:src="@{'https://img-produits.s3.eu-west-3.amazonaws.com/' + ${produit.cheminImage}}" alt="Image de produit"/>
-                            <!--<img th:src="@{'/images/' + ${produit.cheminImage}}" alt="Image de produit" id="img" />-->
+                            <img th:src="@{'https://img-produits.s3.eu-west-3.amazonaws.com/' + ${produit.cheminImage}}" alt="Image de produit" id="img"/>
                         </td>
                         <!-- Référence du produit -->
                         <td>
